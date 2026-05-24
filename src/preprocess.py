@@ -56,3 +56,19 @@ def batadal_on_isle(df):
     X = df[oznitelik_sutunlari]
     y = df[etiket_sutunu].map({-999: 0, 0: 0, 1: 1}).fillna(0).astype(int)
     return X, y, df
+
+def pca_ve_olceklendirici_uygula(X_train, X_val=None, X_test=None):
+    olceklendirici = StandardScaler()
+    pca = PCA(n_components=1)
+    X_train_olcekli = olceklendirici.fit_transform(X_train)
+    X_train_pc = pca.fit_transform(X_train_olcekli)
+    sonuc = [X_train_pc[:, 0]]
+    if X_val is not None:
+        X_val_olcekli = olceklendirici.transform(X_val)
+        X_val_pc = pca.transform(X_val_olcekli)
+        sonuc.append(X_val_pc[:, 0])
+    if X_test is not None:
+        X_test_olcekli = olceklendirici.transform(X_test)
+        X_test_pc = pca.transform(X_test_olcekli)
+        sonuc.append(X_test_pc[:, 0])
+    return tuple(sonuc)
