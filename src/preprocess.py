@@ -42,3 +42,17 @@ def batadal_yukle():
     df = pd.read_csv(yol)
     df.columns = [c.strip() for c in df.columns]
     return df
+
+def batadal_on_isle(df):
+    df = df.copy()
+    etiket_sutunu = None
+    for col in df.columns:
+        if "flag" in col.lower() or "label" in col.lower() or "attack" in col.lower() or col == "ATT_FLAG":
+            etiket_sutunu = col
+            break
+    zaman_sutunlari = ["DATETIME", "datetime", "timestamp", "TIMESTAMP"]
+    oznitelik_sutunlari = [col for col in df.columns if col not in zaman_sutunlari and col != etiket_sutunu]
+    df[oznitelik_sutunlari] = df[oznitelik_sutunlari].ffill().bfill()
+    X = df[oznitelik_sutunlari]
+    y = df[etiket_sutunu].map({-999: 0, 0: 0, 1: 1}).fillna(0).astype(int)
+    return X, y, df
