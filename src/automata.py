@@ -25,3 +25,19 @@ def sax_donusumu(paa_verisi, alfabe_boyutu):
                 break
         sax_dizisi.append(semboller[indeks])
     return "".join(sax_dizisi)
+
+def levenshtein_uzakligi(d1, d2):
+    if len(d1) < len(d2):
+        return levenshtein_uzakligi(d2, d1)
+    if len(d2) == 0:
+        return len(d1)
+    onceki_satir = range(len(d2) + 1)
+    for i, c1 in enumerate(d1):
+        guncel_satir = [i + 1]
+        for j, c2 in enumerate(d2):
+            eklemeler = onceki_satir[j + 1] + 1
+            silmeler = guncel_satir[j] + 1
+            degistirmeler = onceki_satir[j] + (c1 != c2)
+            guncel_satir.append(min(eklemeler, silmeler, degistirmeler))
+        onceki_satir = guncel_satir
+    return onceki_satir[-1]
