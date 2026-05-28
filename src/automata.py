@@ -48,3 +48,22 @@ class OlasiliksalOtomata:
         self.alfabe_boyutu = alfabe_boyutu
         self.durumlar = set()
         self.gecisler = {}
+
+    def egit(self, egitim_verisi, paa_penceresi=1, alpha=0.01):
+        paa_verisi = paa_donusumu(egitim_verisi, paa_penceresi)
+        sax_dizisi = sax_donusumu(paa_verisi, self.alfabe_boyutu)
+        oruntuler = []
+        for i in range(len(sax_dizisi) - self.pencere_boyutu + 1):
+            oruntuler.append(sax_dizisi[i : i + self.pencere_boyutu])
+        self.durumlar = set(oruntuler)
+        tum_durumlar = list(self.durumlar)
+        self.gecisler = {durum: {sonraki_durum: alpha for sonraki_durum in tum_durumlar} for durum in self.durumlar}
+        for i in range(len(oruntuler) - 1):
+            guncel_durum = oruntuler[i]
+            sonraki_durum = oruntuler[i+1]
+            self.gecisler[guncel_durum][sonraki_durum] += 1
+        for guncel_durum, sonraki_durumlar in self.gecisler.items():
+            toplam = sum(sonraki_durumlar.values())
+            if toplam > 0:
+                for sonraki_durum in sonraki_durumlar:
+                    sonraki_durumlar[sonraki_durum] = sonraki_durumlar[sonraki_durum] / toplam
