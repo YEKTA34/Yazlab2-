@@ -67,3 +67,13 @@ class OlasiliksalOtomata:
             if toplam > 0:
                 for sonraki_durum in sonraki_durumlar:
                     sonraki_durumlar[sonraki_durum] = sonraki_durumlar[sonraki_durum] / toplam
+
+    def en_yakin_durumu_bul(self, gorulmemis_oruntu):
+        en_iyi_durum = None
+        min_uzaklik = float('inf')
+        for durum in self.durumlar:
+            uzaklik = levenshtein_uzakligi(gorulmemis_oruntu, durum)
+            if uzaklik < min_uzaklik:
+                min_uzaklik = uzaklik
+                en_iyi_durum = durum
+        return en_iyi_durum, min_uzaklik
