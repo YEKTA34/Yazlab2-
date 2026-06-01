@@ -59,13 +59,20 @@ class AciklanabilirlikModulu:
         last_trans_prob = gecisler_listesi[-1]["olasilik"] if gecisler_listesi else 1.0
         
         karar = "normal"
+        gerekce = "Normal davranis"
         if guncel_durum_bilgisi == "gorulmeyen":
             karar = "anomali"
+            gerekce = "Gorulmeyen oruntu tespit edildi"
         elif last_trans_prob < self.anomali_esigi:
             karar = "anomali"
+            gerekce = "Dusuk gecis olasiligi tespit edildi"
         elif yol_olasiligi < (self.anomali_esigi ** len(gecisler_listesi)) if gecisler_listesi else 1.0:
             karar = "anomali"
+            gerekce = "Dusuk yol olasiligi tespit edildi"
             
+        guven_skoru = yol_olasiligi
+        guven_seviyesi = "Yuksek" if karar == "normal" and guven_skoru >= 1e-4 else "Dusuk"
+        
         sonuc = {
             "zaman_adimi": int(zaman_adimi),
             "durum": onceki_durum,
@@ -75,7 +82,10 @@ class AciklanabilirlikModulu:
             "uzaklik": int(uzaklik),
             "gecisler": gecisler_listesi,
             "yol_olasiligi": float(yol_olasiligi),
-            "karar": karar
+            "karar": karar,
+            "guven_skoru": float(guven_skoru),
+            "guven_seviyesi": guven_seviyesi,
+            "gerekce": gerekce
         }
         
         return sonuc
