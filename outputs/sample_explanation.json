@@ -1,0 +1,182 @@
+[
+  {
+    "zaman_adimi": 36,
+    "durum": "aabc",
+    "oruntu": "abcb",
+    "durum_bilgisi": "gorulmeyen",
+    "eslesen_durum": "bbcb",
+    "uzaklik": 1,
+    "gecisler": [
+      {
+        "baslangic_durumu": "aaaa",
+        "hedef_durum": "aaab",
+        "eslesen_baslangic": "aaaa",
+        "eslesen_hedef": "aaab",
+        "olasilik": 0.12343855187373774
+      },
+      {
+        "baslangic_durumu": "aaab",
+        "hedef_durum": "aabc",
+        "eslesen_baslangic": "aaab",
+        "eslesen_hedef": "aabc",
+        "olasilik": 0.567713833157339
+      },
+      {
+        "baslangic_durumu": "aabc",
+        "hedef_durum": "abcb",
+        "eslesen_baslangic": "aabc",
+        "eslesen_hedef": "bbcb",
+        "olasilik": 0.00019700551615445234
+      }
+    ],
+    "yol_olasiligi": 1.3805707928217235e-05,
+    "karar": "anomali",
+    "guven_skoru": 1.3805707928217235e-05,
+    "guven_seviyesi": "Dusuk",
+    "gerekce": "Gorulmeyen oruntu tespit edildi"
+  },
+  {
+    "zaman_adimi": 105,
+    "durum": "ccac",
+    "oruntu": "cacb",
+    "durum_bilgisi": "gorulmeyen",
+    "eslesen_durum": "cccb",
+    "uzaklik": 1,
+    "gecisler": [
+      {
+        "baslangic_durumu": "cccc",
+        "hedef_durum": "ccca",
+        "eslesen_baslangic": "cccc",
+        "eslesen_hedef": "ccca",
+        "olasilik": 0.1829116102934848
+      },
+      {
+        "baslangic_durumu": "ccca",
+        "hedef_durum": "ccac",
+        "eslesen_baslangic": "ccca",
+        "eslesen_hedef": "ccac",
+        "olasilik": 0.14178291194420228
+      },
+      {
+        "baslangic_durumu": "ccac",
+        "hedef_durum": "cacb",
+        "eslesen_baslangic": "ccac",
+        "eslesen_hedef": "cccb",
+        "olasilik": 0.0005630630630630632
+      }
+    ],
+    "yol_olasiligi": 1.460233149539043e-05,
+    "karar": "anomali",
+    "guven_skoru": 1.460233149539043e-05,
+    "guven_seviyesi": "Dusuk",
+    "gerekce": "Gorulmeyen oruntu tespit edildi"
+  },
+  {
+    "zaman_adimi": 604,
+    "durum": "ccab",
+    "oruntu": "cabc",
+    "durum_bilgisi": "gorulmeyen",
+    "eslesen_durum": "aabc",
+    "uzaklik": 1,
+    "gecisler": [
+      {
+        "baslangic_durumu": "accc",
+        "hedef_durum": "ccca",
+        "eslesen_baslangic": "accc",
+        "eslesen_hedef": "ccca",
+        "olasilik": 0.03280296425457716
+      },
+      {
+        "baslangic_durumu": "ccca",
+        "hedef_durum": "ccab",
+        "eslesen_baslangic": "ccca",
+        "eslesen_hedef": "ccab",
+        "olasilik": 0.011006974716652138
+      },
+      {
+        "baslangic_durumu": "ccab",
+        "hedef_durum": "cabc",
+        "eslesen_baslangic": "ccab",
+        "eslesen_hedef": "aabc",
+        "olasilik": 0.0026595744680851068
+      }
+    ],
+    "yol_olasiligi": 9.602696760142946e-07,
+    "karar": "anomali",
+    "guven_skoru": 9.602696760142946e-07,
+    "guven_seviyesi": "Dusuk",
+    "gerekce": "Gorulmeyen oruntu tespit edildi"
+  },
+  {
+    "zaman_adimi": 605,
+    "durum": "cabc",
+    "oruntu": "abcb",
+    "durum_bilgisi": "gorulmeyen",
+    "eslesen_durum": "bbcb",
+    "uzaklik": 1,
+    "gecisler": [
+      {
+        "baslangic_durumu": "ccca",
+        "hedef_durum": "ccab",
+        "eslesen_baslangic": "ccca",
+        "eslesen_hedef": "ccab",
+        "olasilik": 0.011006974716652138
+      },
+      {
+        "baslangic_durumu": "ccab",
+        "hedef_durum": "cabc",
+        "eslesen_baslangic": "ccab",
+        "eslesen_hedef": "aabc",
+        "olasilik": 0.0026595744680851068
+      },
+      {
+        "baslangic_durumu": "cabc",
+        "hedef_durum": "abcb",
+        "eslesen_baslangic": "aabc",
+        "eslesen_hedef": "bbcb",
+        "olasilik": 0.00019700551615445234
+      }
+    ],
+    "yol_olasiligi": 5.767113657853887e-09,
+    "karar": "anomali",
+    "guven_skoru": 5.767113657853887e-09,
+    "guven_seviyesi": "Dusuk",
+    "gerekce": "Gorulmeyen oruntu tespit edildi"
+  },
+  {
+    "zaman_adimi": 805,
+    "durum": "aabc",
+    "oruntu": "abcb",
+    "durum_bilgisi": "gorulmeyen",
+    "eslesen_durum": "bbcb",
+    "uzaklik": 1,
+    "gecisler": [
+      {
+        "baslangic_durumu": "aaaa",
+        "hedef_durum": "aaab",
+        "eslesen_baslangic": "aaaa",
+        "eslesen_hedef": "aaab",
+        "olasilik": 0.12343855187373774
+      },
+      {
+        "baslangic_durumu": "aaab",
+        "hedef_durum": "aabc",
+        "eslesen_baslangic": "aaab",
+        "eslesen_hedef": "aabc",
+        "olasilik": 0.567713833157339
+      },
+      {
+        "baslangic_durumu": "aabc",
+        "hedef_durum": "abcb",
+        "eslesen_baslangic": "aabc",
+        "eslesen_hedef": "bbcb",
+        "olasilik": 0.00019700551615445234
+      }
+    ],
+    "yol_olasiligi": 1.3805707928217235e-05,
+    "karar": "anomali",
+    "guven_skoru": 1.3805707928217235e-05,
+    "guven_seviyesi": "Dusuk",
+    "gerekce": "Gorulmeyen oruntu tespit edildi"
+  }
+]
