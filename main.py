@@ -6,7 +6,7 @@ import pandas as pd
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-from config import PENCERE_BOYUTU, ALFABE_BOYUTU
+from config import PENCERE_BOYUTU, ALFABE_BOYUTU, OUTPUT_DIZINI
 import preprocess
 from automata import OlasiliksalOtomata, paa_donusumu, sax_donusumu
 from explainability import AciklanabilirlikModulu
@@ -84,12 +84,12 @@ def main():
     
     metrikleri_yazdir(y_dogru_bat, y_tahmin_bat, "BATADAL Test Degerlendirmesi (%60-%20-%20 Zaman Bolmesi)")
     
-    os.makedirs(os.path.join("D:\\yazlab2", "outputs"), exist_ok=True)
+    os.makedirs(OUTPUT_DIZINI, exist_ok=True)
     ornek_aciklamalar = [exp for exp in aciklamalar_bat if exp["durum_bilgisi"] == "gorulmeyen"][:5]
     if not ornek_aciklamalar:
         ornek_aciklamalar = aciklamalar_bat[:5]
         
-    cikti_yolu = os.path.join("D:\\yazlab2", "outputs", "sample_explanation.json")
+    cikti_yolu = os.path.join(OUTPUT_DIZINI, "sample_explanation.json")
     with open(cikti_yolu, "w", encoding="utf-8") as f:
         json.dump(ornek_aciklamalar, f, indent=2)
         
