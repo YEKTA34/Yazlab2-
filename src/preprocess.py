@@ -79,3 +79,12 @@ def skab_bolmeleri_al(X, y, gruplar):
     for train_idx, test_idx in gkf.split(X, y, gruplar):
         bolmeler.append((train_idx, test_idx))
     return bolmeler
+
+def batadal_bolmeleri_al(X, y):
+    n = len(X)
+    train_end = int(0.60 * n)
+    val_end = int(0.80 * n)
+    X_train, y_train = X.iloc[:train_end], y.iloc[:train_end]
+    X_val, y_val = X.iloc[train_end:val_end], y.iloc[train_end:val_end]
+    X_test, y_test = X.iloc[val_end:], y.iloc[val_end:]
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
