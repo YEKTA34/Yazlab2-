@@ -26,3 +26,13 @@ def skab_yukle():
                 tum_veriler.append(df)
     birlesik_veri = pd.concat(tum_veriler, ignore_index=True)
     return birlesik_veri
+
+def skab_on_isle(df):
+    df = df.copy()
+    meta_sutunlar = ["datetime", "changepoint", "source_group", "source_file", "anomaly"]
+    oznitelik_sutunlari = [col for col in df.columns if col not in meta_sutunlar]
+    df[oznitelik_sutunlari] = df[oznitelik_sutunlari].ffill().bfill()
+    X = df[oznitelik_sutunlari]
+    y = df["anomaly"].astype(int)
+    gruplar = df["source_file"]
+    return X, y, gruplar, df
