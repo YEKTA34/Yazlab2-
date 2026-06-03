@@ -36,3 +36,9 @@ def skab_on_isle(df):
     y = df["anomaly"].astype(int)
     gruplar = df["source_file"]
     return X, y, gruplar, df
+
+def batadal_yukle():
+    yol = os.path.join(BATADAL_DIZINI, "BATADAL_dataset04.csv")
+    df = pd.read_csv(yol)
+    df.columns = [c.strip() for c in df.columns]
+    return df
