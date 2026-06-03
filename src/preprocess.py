@@ -72,3 +72,10 @@ def pca_ve_olceklendirici_uygula(X_train, X_val=None, X_test=None):
         X_test_pc = pca.transform(X_test_olcekli)
         sonuc.append(X_test_pc[:, 0])
     return tuple(sonuc)
+
+def skab_bolmeleri_al(X, y, gruplar):
+    gkf = GroupKFold(n_splits=5)
+    bolmeler = []
+    for train_idx, test_idx in gkf.split(X, y, gruplar):
+        bolmeler.append((train_idx, test_idx))
+    return bolmeler
