@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from ..utils.early_stopping import EarlyStopping
+from utils.early_stopping import EarlyStopping
 import os
 
 def train_model(model, train_loader, val_loader, epochs=50, patience=5, lr=0.001, device='cpu', checkpoint_path='checkpoint.pt'):

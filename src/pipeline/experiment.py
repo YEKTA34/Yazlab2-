@@ -1,14 +1,14 @@
 import torch
 import numpy as np
 import copy
-from ..config import cfg
-from ..dataset import TimeSeriesDataset
+from config import cfg
+from dataset import TimeSeriesDataset
 from torch.utils.data import DataLoader
 from .trainer import train_model
-from ..models.lstm import LSTMAnomalyDetector
-from ..models.gru import GRUAnomalyDetector
+from models.lstm import LSTMAnomalyDetector
+from models.gru import GRUAnomalyDetector
 from .logger import ExperimentLogger
-from ..utils.metrics import calculate_metrics
+from utils.metrics import calculate_metrics
 
 def add_gaussian_noise(data_series, mean=0.0, std=0.1):
     """Veriye Gauss gürültüsü ekler."""
