@@ -41,3 +41,10 @@ def levenshtein_uzakligi(d1, d2):
             guncel_satir.append(min(eklemeler, silmeler, degistirmeler))
         onceki_satir = guncel_satir
     return onceki_satir[-1]
+
+class OlasiliksalOtomata:
+    def __init__(self, pencere_boyutu=4, alfabe_boyutu=3):
+        self.pencere_boyutu = pencere_boyutu
+        self.alfabe_boyutu = alfabe_boyutu
+        self.durumlar = set()
+        self.gecisler = {}
