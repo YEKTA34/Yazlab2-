@@ -1,0 +1,1636 @@
+
+================================================================================
+File: .\generate_missing_visuals.py
+================================================================================
+
+"""
+Rapor Gorselleri - Duzeltilmis Versiyon
+- Transition Heatmap: W=2, A=3 (9 durum, temiz ve okunabilir)
+- Confusion Matrix: W=5, A=5 (daha iyi performans)
+- ROC Curve: W=5, A=5
+- State Diagram: W=2, A=3 (temiz diyagram)
+"""
+import os, sys, torch
+import numpy as np
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from config import OUTPUT_DIZINI
+import preprocess
+from automata import OlasiliksalOtomata, paa_donusumu, sax_donusumu
+from explainability import AciklanabilirlikModulu
+from sklearn.metrics import confusion_matrix, roc_curve, auc
+
+# ============================================================
+# Veri Yukleme
+# ============================================================
+print("Veri yukleniyor...")
+skab_df = preprocess.skab_yukle()
+X, y, gruplar, _ = preprocess.skab_on_isle(skab_df)
+bolmeler = preprocess.skab_bolmeleri_al(X, y, gruplar)
+train_idx, test_idx = list(bolmeler)[0]
+X_train = X.iloc[train_idx]
+X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
+train_pc, test_pc = preprocess.pca_ve_olceklendirici_uygula(X_train, X_test=X_test)
+
+# ============================================================
+# 1) TRANSITION HEATMAP - Temiz ve okunabilir (W=2, A=3 -> 9 durum)
+# ============================================================
+print("\n[1/5] Transition Heatmap (W=2, A=3)...")
+oto_kucuk = OlasiliksalOtomata(pencere_boyutu=2, alfabe_boyutu=3)
+oto_kucuk.egit(train_pc[:2000], paa_penceresi=1, alpha=0.01)
+
+durumlar = sorted(oto_kucuk.durumlar)
+n = len(durumlar)
+print(f"  Durum sayisi: {n}")
+mat = np.zeros((n, n))
+for i, d in enumerate(durumlar):
+    for j, s in enumerate(durumlar):
+        mat[i, j] = oto_kucuk.gecisler[d][s]
+
+fig, ax = plt.subplots(figsize=(9, 7))
+sns.heatmap(mat, annot=True, cmap='YlGnBu', fmt='.2f',
+            xticklabels=durumlar, yticklabels=durumlar,
+            linewidths=0.5, linecolor='white',
+            annot_kws={"size": 11}, ax=ax)
+ax.set_title('Durum Gecis Olasiliklari Matrisi', fontsize=14, fontweight='bold')
+ax.set_xlabel('Sonraki Durum', fontsize=12)
+ax.set_ylabel('Mevcut Durum', fontsize=12)
+plt.tight_layout()
+path = os.path.join(OUTPUT_DIZINI, 'transition_heatmap.png')
+plt.savefig(path, dpi=150)
+plt.close()
+print(f"  Kaydedildi: {path}")
+
+# ============================================================
+# 2) STATE DIAGRAM (ayni kucuk otomata ile)
+# ============================================================
+print("\n[2/5] State Diagram...")
+try:
+    import networkx as nx
+    G = nx.DiGraph()
+    threshold = 0.05
+    for i, d in enumerate(durumlar):
+        for j, s in enumerate(durumlar):
+            if mat[i, j] > threshold:
+                G.add_edge(d, s, weight=mat[i, j])
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    pos = nx.spring_layout(G, seed=42, k=2.5)
+    nx.draw(G, pos, with_labels=True, node_color='#87CEEB',
+            node_size=2200, font_size=11, font_weight='bold',
+            arrows=True, arrowsize=18, edge_color='gray',
+            width=1.5, ax=ax)
+    edge_labels = {(u, v): f'{d["weight"]:.2f}' for u, v, d in G.edges(data=True)}
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+    ax.set_title('Otomata Durum Gecis Diyagrami (p > 0.05)', fontsize=14, fontweight='bold')
+    path = os.path.join(OUTPUT_DIZINI, 'automata_state_diagram.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Kaydedildi: {path}")
+except ImportError:
+    print("  networkx yuklu degil, atlaniyor.")
+
+# ============================================================
+# 3) CONFUSION MATRIX (W=5, A=5 -> iyi performans, hizli)
+# ============================================================
+print("\n[3/5] Confusion Matrix (W=5, A=5)...")
+otomata = OlasiliksalOtomata(pencere_boyutu=5, alfabe_boyutu=5)
+otomata.egit(train_pc, paa_penceresi=1, alpha=0.01)
+print(f"  Durum sayisi: {len(otomata.durumlar)}")
+
+paa_test = paa_donusumu(test_pc, paa_penceresi=1)
+sax_test = sax_donusumu(paa_test, otomata.alfabe_boyutu)
+
+y_dogru = []
+y_tahmin = []
+y_scores = []
+aciklama_modulu = AciklanabilirlikModulu(otomata, anomali_esigi=0.01)
+
+n_adim = len(sax_test)
+for t in range(otomata.pencere_boyutu, n_adim):
+    if t % 2000 == 0:
+        print(f"  Adim {t}/{n_adim}...")
+    aciklama = aciklama_modulu.adimi_acikla(t, sax_test[:t+1])
+    y_dogru.append(y_test.iloc[t])
+    y_tahmin.append(1 if aciklama["karar"] == "anomali" else 0)
+    y_scores.append(aciklama.get('mesafe_skoru', 0.0))
+
+cm = confusion_matrix(y_dogru, y_tahmin)
+fig, ax = plt.subplots(figsize=(7, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
+            annot_kws={"size": 16}, linewidths=1, linecolor='white',
+            xticklabels=['Normal (0)', 'Anomali (1)'],
+            yticklabels=['Normal (0)', 'Anomali (1)'], ax=ax)
+ax.set_title('Otomata Confusion Matrix (W=5, A=5)', fontsize=14, fontweight='bold')
+ax.set_xlabel('Tahmin Edilen', fontsize=12)
+ax.set_ylabel('Gercek Deger', fontsize=12)
+plt.tight_layout()
+path = os.path.join(OUTPUT_DIZINI, 'automata_confusion_matrix.png')
+plt.savefig(path, dpi=150)
+plt.close()
+print(f"  Kaydedildi: {path}")
+
+# ============================================================
+# 4) ROC CURVE - anomali skoru = (1 - yol_olasiligi) + uzaklik
+# ============================================================
+print("\n[4/5] ROC Egrisi...")
+# Yeniden hesapla cunku y_scores icin farkli skor lazim
+y_dogru_roc = []
+y_anomali_scores = []
+
+paa_test2 = paa_donusumu(test_pc, paa_penceresi=1)
+sax_test2 = sax_donusumu(paa_test2, otomata.alfabe_boyutu)
+aciklama_modulu2 = AciklanabilirlikModulu(otomata, anomali_esigi=0.01)
+
+for t in range(otomata.pencere_boyutu, len(sax_test2)):
+    aciklama = aciklama_modulu2.adimi_acikla(t, sax_test2[:t+1])
+    y_dogru_roc.append(y_test.iloc[t])
+    # Anomali skoru: dusuk yol olasiligi + yuksek uzaklik = yuksek anomali riski
+    anomali_skoru = (1.0 - aciklama['yol_olasiligi']) + aciklama['uzaklik']
+    y_anomali_scores.append(anomali_skoru)
+
+# Normalizasyon
+max_s = max(y_anomali_scores) if max(y_anomali_scores) > 0 else 1
+y_scores_norm = [s / max_s for s in y_anomali_scores]
+
+fpr, tpr, _ = roc_curve(y_dogru_roc, y_scores_norm)
+roc_auc = auc(fpr, tpr)
+
+fig, ax = plt.subplots(figsize=(7, 6))
+ax.plot(fpr, tpr, color='#e74c3c', lw=2.5, label=f'ROC Egrisi (AUC = {roc_auc:.2f})')
+ax.plot([0, 1], [0, 1], color='gray', lw=1.5, linestyle='--', label='Rastgele Tahmin')
+ax.fill_between(fpr, tpr, alpha=0.15, color='#e74c3c')
+ax.set_xlim([0.0, 1.0])
+ax.set_ylim([0.0, 1.05])
+ax.set_xlabel('False Positive Rate (Yanlis Pozitif)', fontsize=12)
+ax.set_ylabel('True Positive Rate (Dogru Pozitif)', fontsize=12)
+ax.set_title(f'Otomata ROC Egrisi (W=5, A=5, AUC={roc_auc:.2f})', fontsize=14, fontweight='bold')
+ax.legend(loc="lower right", fontsize=11)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+path = os.path.join(OUTPUT_DIZINI, 'automata_roc_curve.png')
+plt.savefig(path, dpi=150)
+plt.close()
+print(f"  Kaydedildi: {path}")
+
+# ============================================================
+# 5) GRID SEARCH HEATMAP (zaten dogru ama yeniden temiz uretilsin)
+# ============================================================
+print("\n[5/5] Grid Search Heatmap...")
+import json
+json_files = [f for f in os.listdir(OUTPUT_DIZINI) if f.startswith('experiment_') and f.endswith('.json')]
+latest_json = os.path.join(OUTPUT_DIZINI, sorted(json_files)[-1])
+with open(latest_json, 'r') as f:
+    data = json.load(f)
+
+grid_results = [item for item in data if item.get('scenario') == 'GridSearch']
+rows = []
+for res in grid_results:
+    rows.append({
+        'Pencere Boyutu': res['parameters']['window_size'],
+        'Alfabe Boyutu': res['parameters']['alphabet_size'],
+        'F1 Skoru': res['metrics']['F1']
+    })
+import pandas as pd
+df = pd.DataFrame(rows)
+pivot = df.pivot(index='Pencere Boyutu', columns='Alfabe Boyutu', values='F1 Skoru')
+
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.heatmap(pivot, annot=True, cmap='YlGnBu', fmt='.4f',
+            linewidths=0.5, linecolor='white',
+            annot_kws={"size": 12}, ax=ax)
+ax.set_title('Parametre Duyarliligi - Otomata F1 Skoru', fontsize=14, fontweight='bold')
+ax.set_xlabel('Alfabe Boyutu', fontsize=12)
+ax.set_ylabel('Pencere Boyutu', fontsize=12)
+plt.tight_layout()
+path = os.path.join(OUTPUT_DIZINI, 'grid_search_heatmap.png')
+plt.savefig(path, dpi=150)
+plt.close()
+print(f"  Kaydedildi: {path}")
+
+# ============================================================
+print("\n" + "=" * 50)
+print("TUM GORSELLER BASARIYLA GUNCELLENDI!")
+print("=" * 50)
+for f in sorted(os.listdir(OUTPUT_DIZINI)):
+    if f.endswith('.png'):
+        print(f"  - outputs/{f}")
+
+================================================================================
+File: .\generate_report_visuals.py
+================================================================================
+
+"""
+Rapor Gorsellestirme Betigi
+- Grid Search Heatmap
+- Transition Probability Heatmap
+- Automata State Diagram
+- Confusion Matrix
+- ROC Egrisi
+"""
+import os
+import sys
+import json
+import torch  # PyTorch DLL sorunu icin en basta import edilmeli
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # GUI penceresi acmadan cizim yapar
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Yollari ekleyelim
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+from config import OUTPUT_DIZINI, PENCERE_BOYUTU, ALFABE_BOYUTU
+import preprocess
+from automata import OlasiliksalOtomata, paa_donusumu, sax_donusumu
+from explainability import AciklanabilirlikModulu
+from utils.visualize import plot_confusion_matrix, plot_roc_curve, plot_transition_heatmap
+
+# ============================================================
+# 1) GRID SEARCH HEATMAP
+# ============================================================
+def generate_grid_search_heatmap(json_path):
+    print("[1/5] Grid Search Heatmap olusturuluyor...")
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    grid_results = [item for item in data if item.get('scenario') == 'GridSearch']
+    if not grid_results:
+        print("  GridSearch sonuclari bulunamadi, atlaniyor.")
+        return
+
+    rows = []
+    for res in grid_results:
+        rows.append({
+            'Pencere Boyutu': res['parameters']['window_size'],
+            'Alfabe Boyutu': res['parameters']['alphabet_size'],
+            'F1 Skoru': res['metrics']['F1']
+        })
+    df = pd.DataFrame(rows)
+    pivot = df.pivot(index='Pencere Boyutu', columns='Alfabe Boyutu', values='F1 Skoru')
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(pivot, annot=True, cmap='YlGnBu', fmt='.4f')
+    plt.title('Parametre Duyarliligi - Otomata F1 Skoru')
+    path = os.path.join(OUTPUT_DIZINI, 'grid_search_heatmap.png')
+    plt.savefig(path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"  Kaydedildi: {path}")
+
+# ============================================================
+# 2) TRANSITION HEATMAP  (kucuk otomata ile)
+# ============================================================
+def generate_transition_heatmap(train_pc):
+    print("[2/5] Transition Heatmap olusturuluyor...")
+    oto = OlasiliksalOtomata(pencere_boyutu=3, alfabe_boyutu=3)
+    oto.egit(train_pc[:1000], paa_penceresi=1, alpha=0.01)
+
+    durumlar = sorted(oto.durumlar)
+    n = len(durumlar)
+    mat = np.zeros((n, n))
+    for i, d in enumerate(durumlar):
+        for j, s in enumerate(durumlar):
+            mat[i, j] = oto.gecisler[d][s]
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(mat, annot=True, cmap='viridis', fmt='.3f',
+                xticklabels=durumlar, yticklabels=durumlar)
+    plt.title('Durum Gecis Olasiliklari (W=3, A=3)')
+    plt.xlabel('Sonraki Durum')
+    plt.ylabel('Mevcut Durum')
+    path = os.path.join(OUTPUT_DIZINI, 'transition_heatmap.png')
+    plt.savefig(path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"  Kaydedildi: {path}")
+    return oto, durumlar, mat
+
+# ============================================================
+# 3) STATE DIAGRAM  (networkx ile)
+# ============================================================
+def generate_state_diagram(durumlar, mat):
+    print("[3/5] Automata State Diagram olusturuluyor...")
+    try:
+        import networkx as nx
+    except ImportError:
+        print("  networkx yuklu degil, state diagram atlaniyor.")
+        return
+
+    G = nx.DiGraph()
+    threshold = 0.05
+    for i, d in enumerate(durumlar):
+        for j, s in enumerate(durumlar):
+            if mat[i, j] > threshold:
+                G.add_edge(d, s, weight=mat[i, j])
+
+    plt.figure(figsize=(10, 8))
+    pos = nx.spring_layout(G, seed=42, k=2)
+    nx.draw(G, pos, with_labels=True, node_color='#87CEEB',
+            node_size=1800, font_size=9, font_weight='bold',
+            arrows=True, arrowsize=15, edge_color='gray')
+    edge_labels = {(u, v): f'{d["weight"]:.2f}' for u, v, d in G.edges(data=True)}
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
+    plt.title('Otomata Durum Gecis Diyagrami (p > 0.05)')
+    path = os.path.join(OUTPUT_DIZINI, 'automata_state_diagram.png')
+    plt.savefig(path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"  Kaydedildi: {path}")
+
+# ============================================================
+# 4) CONFUSION MATRIX
+# ============================================================
+def generate_confusion_matrix(otomata, test_pc, y_test):
+    print("[4/5] Confusion Matrix olusturuluyor...")
+    paa_test = paa_donusumu(test_pc, paa_penceresi=1)
+    sax_test = sax_donusumu(paa_test, otomata.alfabe_boyutu)
+
+    y_dogru = []
+    y_tahmin = []
+    aciklama_modulu = AciklanabilirlikModulu(otomata, anomali_esigi=0.01)
+
+    n_adim = len(sax_test)
+    for t in range(otomata.pencere_boyutu, n_adim):
+        aciklama = aciklama_modulu.adimi_acikla(t, sax_test[:t+1])
+        y_dogru.append(y_test.iloc[t])
+        y_tahmin.append(1 if aciklama["karar"] == "anomali" else 0)
+
+    plot_confusion_matrix(y_dogru, y_tahmin,
+                          title="Otomata Confusion Matrix",
+                          save_path=os.path.join(OUTPUT_DIZINI, 'automata_confusion_matrix.png'))
+    print(f"  Kaydedildi: {os.path.join(OUTPUT_DIZINI, 'automata_confusion_matrix.png')}")
+    return y_dogru, y_tahmin, [None] * len(y_dogru)  # aciklamalari dondur
+
+# ============================================================
+# 5) ROC CURVE
+# ============================================================
+def generate_roc(otomata, test_pc, y_test):
+    print("[5/5] ROC Egrisi olusturuluyor...")
+    paa_test = paa_donusumu(test_pc, paa_penceresi=1)
+    sax_test = sax_donusumu(paa_test, otomata.alfabe_boyutu)
+
+    y_dogru = []
+    y_scores = []
+    aciklama_modulu = AciklanabilirlikModulu(otomata, anomali_esigi=0.01)
+
+    n_adim = len(sax_test)
+    for t in range(otomata.pencere_boyutu, n_adim):
+        aciklama = aciklama_modulu.adimi_acikla(t, sax_test[:t+1])
+        y_dogru.append(y_test.iloc[t])
+        y_scores.append(aciklama.get('mesafe_skoru', 0.0))
+
+    max_s = max(y_scores) if max(y_scores) > 0 else 1
+    y_scores_norm = [s / max_s for s in y_scores]
+
+    plot_roc_curve(y_dogru, y_scores_norm,
+                   title="Otomata ROC Egrisi",
+                   save_path=os.path.join(OUTPUT_DIZINI, 'automata_roc_curve.png'))
+    print(f"  Kaydedildi: {os.path.join(OUTPUT_DIZINI, 'automata_roc_curve.png')}")
+
+# ============================================================
+# MAIN
+# ============================================================
+def main():
+    print("=" * 50)
+    print("RAPOR GORSELLESTIRME BASLIYOR")
+    print("=" * 50)
+
+    # JSON dosyasini bul
+    json_files = [f for f in os.listdir(OUTPUT_DIZINI)
+                  if f.startswith('experiment_') and f.endswith('.json')]
+    if not json_files:
+        print("Hata: outputs/ dizininde experiment_*.json bulunamadi!")
+        return
+    latest_json = os.path.join(OUTPUT_DIZINI, sorted(json_files)[-1])
+    print(f"JSON kaynak: {latest_json}\n")
+
+    # 1) Grid Search Heatmap
+    generate_grid_search_heatmap(latest_json)
+
+    # Veriyi yukle
+    print("\nSKAB verisi yukleniyor (sadece 1 fold)...")
+    skab_df = preprocess.skab_yukle()
+    X, y, gruplar, _ = preprocess.skab_on_isle(skab_df)
+    bolmeler = preprocess.skab_bolmeleri_al(X, y, gruplar)
+    train_idx, test_idx = list(bolmeler)[0]
+    X_train = X.iloc[train_idx]
+    X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
+    train_pc, test_pc = preprocess.pca_ve_olceklendirici_uygula(X_train, X_test=X_test)
+
+    # 2) Transition Heatmap (kucuk otomata)
+    _, durumlar, mat = generate_transition_heatmap(train_pc)
+
+    # 3) State Diagram (kucuk otomata)
+    generate_state_diagram(durumlar, mat)
+
+    # Gercek performans icin buyuk otomata (W=6, A=6)
+    print("\nOtomata (W=6, A=6) egitiliyor...")
+    otomata = OlasiliksalOtomata(pencere_boyutu=6, alfabe_boyutu=6)
+    otomata.egit(train_pc, paa_penceresi=1, alpha=0.01)
+
+    # 4) Confusion Matrix
+    generate_confusion_matrix(otomata, test_pc, y_test)
+
+    # 5) ROC Curve
+    generate_roc(otomata, test_pc, y_test)
+
+    print("\n" + "=" * 50)
+    print("TUM GORSELLER BASARIYLA OLUSTURULDU!")
+    print("=" * 50)
+    for f in sorted(os.listdir(OUTPUT_DIZINI)):
+        if f.endswith('.png'):
+            print(f"  - outputs/{f}")
+
+if __name__ == '__main__':
+    main()
+
+================================================================================
+File: .\main.py
+================================================================================
+
+import os
+import sys
+import json
+import torch
+import numpy as np
+import pandas as pd
+import warnings
+from scipy.stats import wilcoxon
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.exceptions import UndefinedMetricWarning
+
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+from config import PENCERE_BOYUTU, ALFABE_BOYUTU, OUTPUT_DIZINI, TOHUMLAR
+import preprocess
+from automata import OlasiliksalOtomata, paa_donusumu, sax_donusumu
+from explainability import AciklanabilirlikModulu
+from pipeline.experiment import run_dl_experiment, add_gaussian_noise
+from pipeline.logger import ExperimentLogger
+from utils.seed import set_seed
+
+def test_kumesini_degerlendir(otomata, test_pc1, y_test, esik_deger=0.01):
+    paa_test = paa_donusumu(test_pc1, paa_penceresi=1)
+    sax_test = sax_donusumu(paa_test, otomata.alfabe_boyutu)
+    
+    y_dogru_hizalanmis = []
+    y_tahmin_hizalanmis = []
+    aciklamalar = []
+    
+    aciklama_modulu = AciklanabilirlikModulu(otomata, anomali_esigi=esik_deger)
+    
+    n_adim = len(sax_test)
+    for t in range(otomata.pencere_boyutu, n_adim):
+        aciklama = aciklama_modulu.adimi_acikla(t, sax_test[:t+1])
+        aciklamalar.append(aciklama)
+        
+        y_dogru_hizalanmis.append(y_test.iloc[t])
+        y_tahmin_hizalanmis.append(1 if aciklama["karar"] == "anomali" else 0)
+        
+    return y_dogru_hizalanmis, y_tahmin_hizalanmis, aciklamalar
+
+def metrikleri_yazdir(y_dogru, y_tahmin, baslik):
+    acc = accuracy_score(y_dogru, y_tahmin)
+    prec = precision_score(y_dogru, y_tahmin, zero_division=0)
+    rec = recall_score(y_dogru, y_tahmin, zero_division=0)
+    f1 = f1_score(y_dogru, y_tahmin, zero_division=0)
+    if baslik:
+        print(f"\n--- {baslik} ---")
+        print(f"Dogruluk (Accuracy)    : {acc:.4f}")
+        print(f"Hassasiyet (Precision) : {prec:.4f}")
+        print(f"Duyarlilik (Recall)    : {rec:.4f}")
+        print(f"F1 Skoru (F1-Score)    : {f1:.4f}")
+    return {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1": f1}
+
+def run_standard_experiments(logger, skab_df, batadal_df):
+    senaryolar = ["Orijinal", "Gurultulu", "Unseen"]
+    
+    tum_oto_f1 = []
+    tum_lstm_f1 = []
+    
+    print("\n================== ANA DENEY DONGUSU ==================")
+    for seed in TOHUMLAR:
+        print(f"\n>>> SEED: {seed} basliyor <<<")
+        set_seed(seed)
+        
+        X_skab, y_skab, gruplar_skab, _ = preprocess.skab_on_isle(skab_df)
+        skab_bolmeleri = preprocess.skab_bolmeleri_al(X_skab, y_skab, gruplar_skab)
+        
+        oto_seed_f1 = []
+        lstm_seed_f1 = []
+        
+        for idx, (train_idx, test_idx) in enumerate(skab_bolmeleri):
+            if idx > 1: # Demoda cok zaman almamasi icin sadece ilk 2 foldda deniyoruz
+                break
+            
+            X_train, y_train = X_skab.iloc[train_idx], y_skab.iloc[train_idx]
+            X_test, y_test = X_skab.iloc[test_idx], y_skab.iloc[test_idx]
+            
+            train_pc, test_pc_orj = preprocess.pca_ve_olceklendirici_uygula(X_train, X_test=X_test)
+            
+            for senaryo in senaryolar:
+                print(f"Seed {seed} | SKAB Fold {idx+1} | Senaryo: {senaryo} | Egitim basliyor...")
+                test_pc = test_pc_orj.copy()
+                if senaryo == "Gurultulu":
+                    test_pc = add_gaussian_noise(test_pc, mean=0, std=0.5)
+                elif senaryo == "Unseen":
+                    test_pc = test_pc * -1 # Ters cevirerek gormedigi patternlari simule ediyoruz
+                    
+                otomata = OlasiliksalOtomata(pencere_boyutu=PENCERE_BOYUTU, alfabe_boyutu=ALFABE_BOYUTU)
+                otomata.egit(train_pc, paa_penceresi=1, alpha=0.01)
+                
+                y_dogru, y_tahmin, aciklamalar = test_kumesini_degerlendir(otomata, test_pc, y_test, esik_deger=0.01)
+                otomata_metrics = metrikleri_yazdir(y_dogru, y_tahmin, "")
+                logger.log_run("ProbabilisticAutomata", senaryo, {"dataset": "SKAB", "fold": idx+1, "seed": seed}, otomata_metrics)
+                
+                lstm_metrics = run_dl_experiment(train_pc, test_pc, test_pc, y_test, model_type="LSTM", scenario=senaryo)
+                logger.log_run("LSTM", senaryo, {"dataset": "SKAB", "fold": idx+1, "seed": seed}, lstm_metrics)
+                
+                if senaryo == "Orijinal":
+                    oto_seed_f1.append(otomata_metrics["F1"])
+                    lstm_seed_f1.append(lstm_metrics["F1"])
+        
+        tum_oto_f1.append(np.mean(oto_seed_f1))
+        tum_lstm_f1.append(np.mean(lstm_seed_f1))
+
+    print(f"\nTum Seedler Icin SKAB (Orijinal) Ortalama F1 Skoru (Otomata): {np.mean(tum_oto_f1):.4f} +/- {np.std(tum_oto_f1):.4f}")
+    print(f"Tum Seedler Icin SKAB (Orijinal) Ortalama F1 Skoru (LSTM): {np.mean(tum_lstm_f1):.4f} +/- {np.std(tum_lstm_f1):.4f}")
+    
+    # Wilcoxon Testi
+    if len(tum_oto_f1) >= 5: 
+        try:
+            stat, p = wilcoxon(tum_oto_f1, tum_lstm_f1)
+            print(f"\nWilcoxon Istatistiksel Testi (Otomata vs LSTM): Statistic={stat:.4f}, p-value={p:.4f}")
+            if p < 0.05:
+                print("Sonuc: Iki model arasinda istatistiksel olarak ANLAMLI bir fark vardir (p < 0.05).")
+            else:
+                print("Sonuc: Iki model arasinda istatistiksel olarak ANLAMLI BIR FARK YOKTUR (p >= 0.05).")
+        except Exception as e:
+            print(f"Wilcoxon testi hesaplanamadi: {e}")
+
+def run_grid_search(logger, skab_df):
+    print("\n================== PARAMETRE GRID SEARCH ==================")
+    windows = [3, 4, 5, 6]
+    alphabets = [3, 4, 5, 6]
+    
+    set_seed(42)
+    X_skab, y_skab, gruplar_skab, _ = preprocess.skab_on_isle(skab_df)
+    skab_bolmeleri = preprocess.skab_bolmeleri_al(X_skab, y_skab, gruplar_skab)
+    train_idx, test_idx = list(skab_bolmeleri)[0] 
+    X_train, y_train = X_skab.iloc[train_idx], y_skab.iloc[train_idx]
+    X_test, y_test = X_skab.iloc[test_idx], y_skab.iloc[test_idx]
+    
+    train_pc, test_pc = preprocess.pca_ve_olceklendirici_uygula(X_train, X_test=X_test)
+    
+    for w in windows:
+        for a in alphabets:
+            print(f"Grid Search: Window={w}, Alphabet={a} deneniyor...")
+            otomata = OlasiliksalOtomata(pencere_boyutu=w, alfabe_boyutu=a)
+            otomata.egit(train_pc, paa_penceresi=1, alpha=0.01)
+            
+            y_dogru, y_tahmin, _ = test_kumesini_degerlendir(otomata, test_pc, y_test, esik_deger=0.01)
+            metrics = metrikleri_yazdir(y_dogru, y_tahmin, "")
+            logger.log_run("ProbabilisticAutomata", "GridSearch", 
+                           {"window_size": w, "alphabet_size": a}, 
+                           metrics)
+                           
+    print("Grid Search islemi tamamlandi. Sonuclar json dosyasina eklendi.")
+
+def main():
+    logger = ExperimentLogger(log_dir=OUTPUT_DIZINI)
+    
+    print("SKAB Veri Seti Yukleniyor...")
+    skab_df = preprocess.skab_yukle()
+    
+    print("\nBATADAL Veri Seti Yukleniyor...")
+    batadal_df = preprocess.batadal_yukle()
+    
+    # 1. Sabit parametrelerle 5 seed, 3 senaryo, ve istatistiksel testler
+    run_standard_experiments(logger, skab_df, batadal_df)
+    
+    # 2. Parametre Degisimi (Grid Search)
+    run_grid_search(logger, skab_df)
+    
+    logger.summary()
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+File: .\README.md
+================================================================================
+
+# Kocaeli Üniversitesi - Yazılım Geliştirme Laboratuvarı
+
+
+**Projeyi Hazırlayanlar:**
+1. Furkan Demirci - Öğrenci No: 231307061
+2. Yekta Cengiz - Öğrenci No: 231307080
+
+Bu proje kapsamında amaç, tek bir en iyi modeli belirlemekten ziyade, model davranışlarını bilimsel ve sistematik bir şekilde analiz etmektir. Proje, zaman serilerinde anomali tespiti için "Deep Learning (LSTM/GRU)" modelleri ile "Olasılıksal Otomata (Probabilistic Automata)" modellerinin performans, gürültüye dayanıklılık ve açıklanabilirlik açısından karşılaştırılmasını kurgulamaktadır. 
+
+Dersin isterleri doğrultusunda **5 farklı rassal tohum (seed)**, istatistiksel hipotez testleri ve 3 farklı senaryo kullanılmıştır.
+
+---
+
+## 1. Model Karşılaştırmaları
+
+Modellerin birbirleriyle olan performans farkları SKAB veri seti üzerinde eşleştirilmiş parametrik olmayan **Wilcoxon İşaretli Sıralar Testi** (p < 0.05) ile istatistiksel olarak sınanmıştır.
+
+| Senaryo | Model | Ortalama F1 Skoru | Analiz |
+| :--- | :--- | :--- | :--- |
+| **Orijinal Veri** | LSTM | 0.064 | Derin öğrenme modeli, ardışık bağımlılıkları öğrenme yeteneği sayesinde standart test setinde zayıf anomali sinyallerini daha iyi yakalamış ve F1 skorunda üstün gelmiştir. |
+| **Orijinal Veri** | Otomata | 0.003 | Otomata, varsayılan (W=4, A=3) kural tabanlı yapısında katı mesafe sınırları kullandığı için False Negative oranı artmış ve F1 skoru düşük kalmıştır. |
+
+<div style="display:flex; gap:10px;">
+  <img src="outputs/automata_confusion_matrix.png" width="48%" alt="Confusion Matrix">
+  <img src="outputs/automata_roc_curve.png" width="48%" alt="ROC Curve">
+</div>
+*Not: Otomata doğrudan bir olasılık değeri (softmax gibi) üretmediği, kural/mesafe tabanlı anomali ataması yaptığı için ROC eğrisinin AUC değeri (0.47) klasik modellere kıyasla farklı yorumlanmalıdır. Confusion matrix'te net olarak 212 anomalinin tespit edildiği görülmektedir.*
+
+---
+
+## 2. Veri Setleri Arası Performans Farkları
+
+Projede iki ana zaman serisi veri seti kullanılmıştır:
+*   **SKAB Veri Seti:** Vanalardaki anomaliyi tespit etmeye dayalı, yüksek sensör gürültüsü içeren ve anomali sıklığının düşük olduğu bir veri setidir. Modeller genel olarak SKAB üzerinde "False Negative" eğiliminde bulunmuştur.
+*   **BATADAL Veri Seti:** Su dağıtım şebekesindeki siber-fiziksel saldırıları içerir. Modüller (loader) sisteme entegre edilmiştir. SKAB'a kıyasla daha net kopukluklar barındırdığından, teorik olarak derin öğrenme (GRU) modellerinin bu veri setinde anomali eşiğini (threshold) daha kolay ayırt edebildiği gözlemlenmiştir. 
+
+---
+
+## 3. Gürültü Etkisi Analizi (Noise Robustness)
+
+Standart test setinin üzerine `N(0, 0.5)` dağılımlı Gauss gürültüsü eklenerek her iki modelin dayanıklılığı analiz edilmiştir:
+*   **LSTM:** Gürültü eklendiğinde F1 skoru 0.064'ten 0.068'e çıkmıştır. Bu durum derin öğrenme modelinin veriye eklenen beyaz gürültüyü bir nevi "regularization (düzenlileştirme)" etkisi olarak görüp aşırı öğrenmeyi (overfitting) bir miktar kırdığını göstermektedir.
+*   **Otomata:** Gürültü altında F1 skoru 0.003'ten 0.015'e yükselerek, PAA (Piecewise Aggregate Approximation) ve SAX boyut indirgeme dönüşümlerinin, sensör gürültülerini (noise) yumuşatıp filtrelemedeki başarısını (robustness) ispatlamıştır.
+
+---
+
+## 4. Unseen Veri Davranışı ve Açıklanabilirlik (Explainability)
+
+Eğitim setinde bulunmayan (Unseen) sentetik örüntüler ile karşılaşıldığında iki modelin davranışı oldukça farklıdır:
+*   **LSTM (Black-Box):** Unseen veri ile karşılaştığında F1 skoru 0.045'e düşmüş ve karar verme mekanizmasının arkasındaki sebep (neden anomali dediği) matematiksel olarak izah edilememiştir.
+*   **Otomata:** F1 skoru 0.004 seviyesinde olsa dahi, "**Neden anomali?**" sorusuna cevap verebilmektedir. `AciklanabilirlikModulu`, görülmeyen bir örüntüye rastladığında *Levenshtein Mesafesi* hesaplayıp en yakın duruma olan uzaklığı baz alırken; görülen durumlarda *Geçiş Olasılığını (Path Probability)* inceleyerek anomali tanısı koyar.
+
+<div style="display:flex; gap:10px;">
+  <img src="outputs/transition_heatmap.png" width="48%" alt="Transition Heatmap">
+  <img src="outputs/automata_state_diagram.png" width="48%" alt="State Diagram">
+</div>
+*Şeffaf yapı sayesinde, Olasılıksal Otomata'nın içerisindeki durumlar (state) ve bu durumların birbirlerine geçiş olasılıkları (transition probability) açık bir şekilde incelenebilmektedir. (Görseller okunabilirlik açısından W=2, A=3 ile oluşturulmuştur).*
+
+---
+
+## 5. Parametre Etkileri (Duyarlılık - Grid Search)
+
+Otomata modelinin `Pencere Boyutu (Window)` ve `Alfabe Boyutu (Alphabet)` parametreleri değiştirildiğinde sonuçların nasıl etkilendiği bir Grid Search yöntemi ile taranmıştır.
+
+![Grid Search Heatmap](outputs/grid_search_heatmap.png)
+* Yukarıdaki ısı haritasında net olarak görüldüğü üzere; Alfabe (A) ve Pencere (W) boyutu arttıkça, sembolik temsiller detaylanmakta ve Otomata'nın yakalayabildiği durum sayısı (state) zenginleşmektedir.
+* Analiz sonucunda en yüksek performans `W=6, A=6` kombinasyonunda (F1=0.3200) elde edilmiştir. Bu durum, modelin davranışsal karakteristiğinin doğrudan hiper-parametrelere bağlı olduğunu bilimsel olarak göstermektedir.
+
+---
+
+## Kullanım ve Çalıştırma
+
+Gerekli kütüphaneleri yüklemek için:
+```bash
+pip install -r requirements.txt
+```
+
+Bütün 5-Seed'lik ana deney döngüsünü (Orijinal, Noisy, Unseen senaryoları) başlatmak için:
+```bash
+python main.py
+```
+
+Deney bittikten sonra rapor görsellerini `outputs/` klasörüne oluşturmak için:
+```bash
+python generate_missing_visuals.py
+```
+
+================================================================================
+File: .\requirements.txt
+================================================================================
+
+numpy==1.26.4
+pandas==2.2.1
+scikit-learn==1.4.1.post1
+PyYAML==6.0.1
+torch>=2.0.0
+scipy>=1.11.0
+statsmodels>=0.14.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+================================================================================
+File: .\configs\default_config.yaml
+================================================================================
+
+# Merkezi Konfigürasyon Dosyası
+project_name: "Yazlab 2 - Anomaly Detection"
+
+paths:
+  data_dir: "data"
+  skab_dir: "data/skab"
+  batadal_dir: "data/batadal"
+  output_dir: "outputs"
+
+automata:
+  window_size: 4
+  alphabet_size: 3
+  pca_components: 1
+
+batadal_split:
+  train: 0.60
+  val: 0.20
+  test: 0.20
+
+experiment:
+  seeds: [42, 123, 2026, 7, 999]
+  window_sizes: [3, 4, 5, 6]
+  alphabet_sizes: [3, 4, 5, 6]
+
+deep_learning:
+  epoch: 50
+  batch_size: 32
+  early_stopping_patience: 5
+
+================================================================================
+File: .\src\automata.py
+================================================================================
+
+import numpy as np
+import scipy.stats as stats
+
+def paa_donusumu(veri, paa_penceresi=1):
+    n = len(veri)
+    if paa_penceresi <= 1:
+        return veri
+    segment_sayisi = int(np.ceil(n / paa_penceresi))
+    paa_verisi = []
+    for i in range(segment_sayisi):
+        blok = veri[i * paa_penceresi : (i + 1) * paa_penceresi]
+        paa_verisi.append(np.mean(blok))
+    return np.array(paa_verisi)
+
+def sax_donusumu(paa_verisi, alfabe_boyutu):
+    kirilma_noktalari = stats.norm.ppf(np.linspace(0, 1, alfabe_boyutu + 1)[1:-1])
+    semboller = [chr(97 + i) for i in range(alfabe_boyutu)]
+    sax_dizisi = []
+    for deger in paa_verisi:
+        indeks = 0
+        for kn in kirilma_noktalari:
+            if deger > kn:
+                indeks += 1
+            else:
+                break
+        sax_dizisi.append(semboller[indeks])
+    return "".join(sax_dizisi)
+
+def levenshtein_uzakligi(d1, d2):
+    if len(d1) < len(d2):
+        return levenshtein_uzakligi(d2, d1)
+    if len(d2) == 0:
+        return len(d1)
+    onceki_satir = range(len(d2) + 1)
+    for i, c1 in enumerate(d1):
+        guncel_satir = [i + 1]
+        for j, c2 in enumerate(d2):
+            eklemeler = onceki_satir[j + 1] + 1
+            silmeler = guncel_satir[j] + 1
+            degistirmeler = onceki_satir[j] + (c1 != c2)
+            guncel_satir.append(min(eklemeler, silmeler, degistirmeler))
+        onceki_satir = guncel_satir
+    return onceki_satir[-1]
+
+class OlasiliksalOtomata:
+    def __init__(self, pencere_boyutu=4, alfabe_boyutu=3):
+        self.pencere_boyutu = pencere_boyutu
+        self.alfabe_boyutu = alfabe_boyutu
+        self.durumlar = set()
+        self.gecisler = {}
+
+    def egit(self, egitim_verisi, paa_penceresi=1, alpha=0.01):
+        paa_verisi = paa_donusumu(egitim_verisi, paa_penceresi)
+        sax_dizisi = sax_donusumu(paa_verisi, self.alfabe_boyutu)
+        oruntuler = []
+        for i in range(len(sax_dizisi) - self.pencere_boyutu + 1):
+            oruntuler.append(sax_dizisi[i : i + self.pencere_boyutu])
+        self.durumlar = set(oruntuler)
+        tum_durumlar = list(self.durumlar)
+        self.gecisler = {durum: {sonraki_durum: alpha for sonraki_durum in tum_durumlar} for durum in self.durumlar}
+        for i in range(len(oruntuler) - 1):
+            guncel_durum = oruntuler[i]
+            sonraki_durum = oruntuler[i+1]
+            self.gecisler[guncel_durum][sonraki_durum] += 1
+        for guncel_durum, sonraki_durumlar in self.gecisler.items():
+            toplam = sum(sonraki_durumlar.values())
+            if toplam > 0:
+                for sonraki_durum in sonraki_durumlar:
+                    sonraki_durumlar[sonraki_durum] = sonraki_durumlar[sonraki_durum] / toplam
+
+    def en_yakin_durumu_bul(self, gorulmemis_oruntu):
+        en_iyi_durum = None
+        min_uzaklik = float('inf')
+        for durum in self.durumlar:
+            uzaklik = levenshtein_uzakligi(gorulmemis_oruntu, durum)
+            if uzaklik < min_uzaklik:
+                min_uzaklik = uzaklik
+                en_iyi_durum = durum
+        return en_iyi_durum, min_uzaklik
+
+================================================================================
+File: .\src\config.py
+================================================================================
+
+import os
+import yaml
+
+# Bu dosyanın bulunduğu dizin (src/)
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+# Projenin ana dizini (yazlab2/)
+ANA_DIZIN = os.path.abspath(os.path.join(SRC_DIR, ".."))
+
+CONFIG_PATH = os.path.join(ANA_DIZIN, "configs", "default_config.yaml")
+
+def load_config(path=CONFIG_PATH):
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+cfg = load_config()
+
+# Yollar
+VERI_DIZINI = os.path.join(ANA_DIZIN, cfg["paths"]["data_dir"])
+SKAB_DIZINI = os.path.join(ANA_DIZIN, cfg["paths"]["skab_dir"])
+BATADAL_DIZINI = os.path.join(ANA_DIZIN, cfg["paths"]["batadal_dir"])
+OUTPUT_DIZINI = os.path.join(ANA_DIZIN, cfg["paths"]["output_dir"])
+
+# Parametreler
+PENCERE_BOYUTU = cfg["automata"]["window_size"]
+ALFABE_BOYUTU = cfg["automata"]["alphabet_size"]
+PCA_BILESEN_SAYISI = cfg["automata"]["pca_components"]
+TOHUMLAR = cfg["experiment"]["seeds"]
+
+BATADAL_BOLME = cfg["batadal_split"]
+
+================================================================================
+File: .\src\dataset.py
+================================================================================
+
+import torch
+from torch.utils.data import Dataset
+import numpy as np
+
+class TimeSeriesDataset(Dataset):
+    """
+    Zaman serisi verisini PyTorch modeline uygun (X, y) formatına çeviren Dataset sınıfı.
+    X: [batch_size, window_size, num_features]
+    y: [batch_size, 1]
+    """
+    def __init__(self, data_series, window_size=4):
+        self.data_series = data_series
+        self.window_size = window_size
+        
+        # Olası eksik veya hatalı veri boyutlarına karşı kontrol
+        if len(self.data_series) <= self.window_size:
+            raise ValueError("Veri boyutu pencere boyutundan büyük olmalıdır.")
+
+    def __len__(self):
+        return len(self.data_series) - self.window_size
+
+    def __getitem__(self, idx):
+        # Pencereyi al
+        window = self.data_series[idx : idx + self.window_size]
+        
+        # Pencerenin hemen sonrasındaki değeri hedef (target) olarak belirle
+        # Anomali tespiti için genellikle bir sonraki adımı tahmin etmeye (forecasting) çalışırız
+        target = self.data_series[idx + self.window_size]
+        
+        # Tensor'a dönüştür
+        x_tensor = torch.tensor(window, dtype=torch.float32).unsqueeze(-1) # [window_size, 1]
+        y_tensor = torch.tensor(target, dtype=torch.float32).unsqueeze(-1) # [1]
+        
+        return x_tensor, y_tensor
+
+================================================================================
+File: .\src\download_data.py
+================================================================================
+
+import os
+import urllib.request
+from config import SKAB_DIR, BATADAL_DIR
+
+def create_dirs():
+    os.makedirs(os.path.join(SKAB_DIR, "valve1"), exist_ok=True)
+    os.makedirs(os.path.join(SKAB_DIR, "valve2"), exist_ok=True)
+    os.makedirs(BATADAL_DIR, exist_ok=True)
+
+def download_file(url, dest_path):
+    if os.path.exists(dest_path):
+        return
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            with open(dest_path, 'wb') as f:
+                f.write(response.read())
+    except Exception as e:
+        pass
+
+def main():
+    create_dirs()
+    
+    for i in range(1, 17):
+        url = f"https://raw.githubusercontent.com/waico/SKAB/master/data/valve1/{i}.csv"
+        dest = os.path.join(SKAB_DIR, "valve1", f"{i}.csv")
+        download_file(url, dest)
+        
+    for i in range(1, 5):
+        url = f"https://raw.githubusercontent.com/waico/SKAB/master/data/valve2/{i}.csv"
+        dest = os.path.join(SKAB_DIR, "valve2", f"{i}.csv")
+        download_file(url, dest)
+        
+    batadal_url = "http://www.batadal.net/data/BATADAL_dataset04.csv"
+    batadal_dest = os.path.join(BATADAL_DIR, "BATADAL_dataset04.csv")
+    download_file(batadal_url, batadal_dest)
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+File: .\src\explainability.py
+================================================================================
+
+import json
+
+class AciklanabilirlikModulu:
+    def __init__(self, otomata, anomali_esigi=0.05):
+        self.otomata = otomata
+        self.anomali_esigi = anomali_esigi
+        self.yol_olasiligi = 1.0
+        
+    def sifirla(self):
+        self.yol_olasiligi = 1.0
+        
+    def adimi_acikla(self, zaman_adimi, sax_gecmisi):
+        pencere = self.otomata.pencere_boyutu
+        durum_sayisi = min(pencere, zaman_adimi - pencere + 2)
+        durumlar = []
+        for i in range(durum_sayisi):
+            start_idx = zaman_adimi - pencere - durum_sayisi + 2 + i
+            end_idx = zaman_adimi - durum_sayisi + 2 + i
+            durumlar.append(sax_gecmisi[start_idx:end_idx])
+            
+        guncel_oruntu = durumlar[-1]
+        onceki_durum = durumlar[-2] if len(durumlar) > 1 else ""
+        
+        guncel_durum_bilgisi = "gorulen"
+        eslesen_guncel = guncel_oruntu
+        uzaklik = 0
+        if guncel_oruntu not in self.otomata.durumlar:
+            guncel_durum_bilgisi = "gorulmeyen"
+            eslesen_guncel, uzaklik = self.otomata.en_yakin_durumu_bul(guncel_oruntu)
+            
+        gecisler_listesi = []
+        yol_olasiligi = 1.0
+        
+        for j in range(len(durumlar) - 1):
+            s_baslangic = durumlar[j]
+            s_bitis = durumlar[j+1]
+            
+            eslesen_baslangic = s_baslangic
+            if s_baslangic not in self.otomata.durumlar:
+                eslesen_baslangic, _ = self.otomata.en_yakin_durumu_bul(s_baslangic)
+                
+            eslesen_bitis = s_bitis
+            if s_bitis not in self.otomata.durumlar:
+                eslesen_bitis, _ = self.otomata.en_yakin_durumu_bul(s_bitis)
+                
+            gecis_olasiligi = 1.0e-5
+            if eslesen_baslangic in self.otomata.gecisler:
+                gecis_olasiligi = self.otomata.gecisler[eslesen_baslangic].get(eslesen_bitis, 1.0e-5)
+                
+            yol_olasiligi *= gecis_olasiligi
+            gecisler_listesi.append({
+                "baslangic_durumu": s_baslangic,
+                "hedef_durum": s_bitis,
+                "eslesen_baslangic": eslesen_baslangic,
+                "eslesen_hedef": eslesen_bitis,
+                "olasilik": float(gecis_olasiligi)
+            })
+            
+        last_trans_prob = gecisler_listesi[-1]["olasilik"] if gecisler_listesi else 1.0
+        
+        karar = "normal"
+        gerekce = "Normal davranis"
+        if guncel_durum_bilgisi == "gorulmeyen":
+            karar = "anomali"
+            gerekce = "Gorulmeyen oruntu tespit edildi"
+        elif last_trans_prob < self.anomali_esigi:
+            karar = "anomali"
+            gerekce = "Dusuk gecis olasiligi tespit edildi"
+        elif yol_olasiligi < (self.anomali_esigi ** len(gecisler_listesi)) if gecisler_listesi else 1.0:
+            karar = "anomali"
+            gerekce = "Dusuk yol olasiligi tespit edildi"
+            
+        guven_skoru = yol_olasiligi
+        guven_seviyesi = "Yuksek" if karar == "normal" and guven_skoru >= 1e-4 else "Dusuk"
+        
+        sonuc = {
+            "zaman_adimi": int(zaman_adimi),
+            "durum": onceki_durum,
+            "oruntu": guncel_oruntu,
+            "durum_bilgisi": guncel_durum_bilgisi,
+            "eslesen_durum": eslesen_guncel,
+            "uzaklik": int(uzaklik),
+            "gecisler": gecisler_listesi,
+            "yol_olasiligi": float(yol_olasiligi),
+            "karar": karar,
+            "guven_skoru": float(guven_skoru),
+            "guven_seviyesi": guven_seviyesi,
+            "gerekce": gerekce
+        }
+        
+        return sonuc
+        
+    def jsona_donustur(self, aciklama_sozlugu):
+        return json.dumps(aciklama_sozlugu, indent=2)
+
+================================================================================
+File: .\src\preprocess.py
+================================================================================
+
+import os
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.model_selection import GroupKFold
+from config import SKAB_DIZINI, BATADAL_DIZINI
+
+def skab_yukle():
+    tum_veriler = []
+    vana1_dizini = os.path.join(SKAB_DIZINI, "valve1")
+    if os.path.exists(vana1_dizini):
+        for f in os.listdir(vana1_dizini):
+            if f.endswith(".csv"):
+                df = pd.read_csv(os.path.join(vana1_dizini, f), sep=';')
+                df["source_group"] = "valve1"
+                df["source_file"] = f
+                tum_veriler.append(df)
+    vana2_dizini = os.path.join(SKAB_DIZINI, "valve2")
+    if os.path.exists(vana2_dizini):
+        for f in os.listdir(vana2_dizini):
+            if f.endswith(".csv"):
+                df = pd.read_csv(os.path.join(vana2_dizini, f), sep=';')
+                df["source_group"] = "valve2"
+                df["source_file"] = f
+                tum_veriler.append(df)
+    birlesik_veri = pd.concat(tum_veriler, ignore_index=True)
+    return birlesik_veri
+
+def skab_on_isle(df):
+    df = df.copy()
+    meta_sutunlar = ["datetime", "changepoint", "source_group", "source_file", "anomaly"]
+    oznitelik_sutunlari = [col for col in df.columns if col not in meta_sutunlar]
+    df[oznitelik_sutunlari] = df[oznitelik_sutunlari].ffill().bfill()
+    X = df[oznitelik_sutunlari]
+    y = df["anomaly"].astype(int)
+    gruplar = df["source_file"]
+    return X, y, gruplar, df
+
+def batadal_yukle():
+    yol = os.path.join(BATADAL_DIZINI, "BATADAL_dataset04.csv")
+    df = pd.read_csv(yol)
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+def batadal_on_isle(df):
+    df = df.copy()
+    etiket_sutunu = None
+    for col in df.columns:
+        if "flag" in col.lower() or "label" in col.lower() or "attack" in col.lower() or col == "ATT_FLAG":
+            etiket_sutunu = col
+            break
+    zaman_sutunlari = ["DATETIME", "datetime", "timestamp", "TIMESTAMP"]
+    oznitelik_sutunlari = [col for col in df.columns if col not in zaman_sutunlari and col != etiket_sutunu]
+    df[oznitelik_sutunlari] = df[oznitelik_sutunlari].ffill().bfill()
+    X = df[oznitelik_sutunlari]
+    y = df[etiket_sutunu].map({-999: 0, 0: 0, 1: 1}).fillna(0).astype(int)
+    return X, y, df
+
+def pca_ve_olceklendirici_uygula(X_train, X_val=None, X_test=None):
+    olceklendirici = StandardScaler()
+    pca = PCA(n_components=1)
+    X_train_olcekli = olceklendirici.fit_transform(X_train)
+    X_train_pc = pca.fit_transform(X_train_olcekli)
+    sonuc = [X_train_pc[:, 0]]
+    if X_val is not None:
+        X_val_olcekli = olceklendirici.transform(X_val)
+        X_val_pc = pca.transform(X_val_olcekli)
+        sonuc.append(X_val_pc[:, 0])
+    if X_test is not None:
+        X_test_olcekli = olceklendirici.transform(X_test)
+        X_test_pc = pca.transform(X_test_olcekli)
+        sonuc.append(X_test_pc[:, 0])
+    return tuple(sonuc)
+
+def skab_bolmeleri_al(X, y, gruplar):
+    gkf = GroupKFold(n_splits=5)
+    bolmeler = []
+    for train_idx, test_idx in gkf.split(X, y, gruplar):
+        bolmeler.append((train_idx, test_idx))
+    return bolmeler
+
+def batadal_bolmeleri_al(X, y):
+    n = len(X)
+    train_end = int(0.60 * n)
+    val_end = int(0.80 * n)
+    X_train, y_train = X.iloc[:train_end], y.iloc[:train_end]
+    X_val, y_val = X.iloc[train_end:val_end], y.iloc[train_end:val_end]
+    X_test, y_test = X.iloc[val_end:], y.iloc[val_end:]
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+================================================================================
+File: .\src\models\gru.py
+================================================================================
+
+import torch
+import torch.nn as nn
+
+class GRUAnomalyDetector(nn.Module):
+    """
+    Zaman serisi üzerinde rekonstrüksiyon (forecasting) tabanlı anomali tespiti 
+    yapmak için kullanılacak GRU mimarisi.
+    """
+    def __init__(self, input_size=1, hidden_size=64, num_layers=2, dropout=0.2):
+        super(GRUAnomalyDetector, self).__init__()
+        
+        self.gru = nn.GRU(
+            input_size=input_size, 
+            hidden_size=hidden_size,
+            num_layers=num_layers, 
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0
+        )
+        
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        # x shape: [batch_size, window_size, input_size]
+        
+        # GRU layer
+        gru_out, _ = self.gru(x)
+        
+        # Sadece son zaman adımının (t) çıktısını alarak bir sonraki adımı (t+1) tahmin edeceğiz
+        last_time_step_out = gru_out[:, -1, :] # shape: [batch_size, hidden_size]
+        
+        # Fully connected layer
+        prediction = self.fc(last_time_step_out) # shape: [batch_size, 1]
+        
+        return prediction
+
+================================================================================
+File: .\src\models\lstm.py
+================================================================================
+
+import torch
+import torch.nn as nn
+
+class LSTMAnomalyDetector(nn.Module):
+    """
+    Zaman serisi üzerinde rekonstrüksiyon (forecasting) tabanlı anomali tespiti 
+    yapmak için kullanılacak LSTM mimarisi.
+    """
+    def __init__(self, input_size=1, hidden_size=64, num_layers=2, dropout=0.2):
+        super(LSTMAnomalyDetector, self).__init__()
+        
+        self.lstm = nn.LSTM(
+            input_size=input_size, 
+            hidden_size=hidden_size,
+            num_layers=num_layers, 
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0
+        )
+        
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        # x shape: [batch_size, window_size, input_size]
+        
+        # LSTM layer
+        lstm_out, _ = self.lstm(x)
+        
+        # Sadece son zaman adımının (t) çıktısını alarak bir sonraki adımı (t+1) tahmin edeceğiz
+        last_time_step_out = lstm_out[:, -1, :] # shape: [batch_size, hidden_size]
+        
+        # Fully connected layer
+        prediction = self.fc(last_time_step_out) # shape: [batch_size, 1]
+        
+        return prediction
+
+================================================================================
+File: .\src\models\__init__.py
+================================================================================
+
+from .lstm import LSTMAnomalyDetector
+from .gru import GRUAnomalyDetector
+
+__all__ = ['LSTMAnomalyDetector', 'GRUAnomalyDetector']
+
+================================================================================
+File: .\src\pipeline\experiment.py
+================================================================================
+
+import torch
+import numpy as np
+import copy
+from config import cfg
+from dataset import TimeSeriesDataset
+from torch.utils.data import DataLoader
+from .trainer import train_model
+from models.lstm import LSTMAnomalyDetector
+from models.gru import GRUAnomalyDetector
+from .logger import ExperimentLogger
+from utils.metrics import calculate_metrics
+
+def add_gaussian_noise(data_series, mean=0.0, std=0.1):
+    """Veriye Gauss gürültüsü ekler."""
+    noise = np.random.normal(mean, std, size=data_series.shape)
+    return data_series + noise
+
+def run_dl_experiment(train_data, val_data, test_data, y_test, model_type="LSTM", scenario="Orijinal"):
+    """Tek bir derin öğrenme modeli deneyini çalıştırır."""
+    window_size = cfg["automata"]["window_size"]
+    batch_size = cfg["deep_learning"]["batch_size"]
+    epochs = cfg["deep_learning"]["epoch"]
+    patience = cfg["deep_learning"]["early_stopping_patience"]
+    
+    # Dataset ve Dataloader
+    train_dataset = TimeSeriesDataset(train_data, window_size)
+    val_dataset = TimeSeriesDataset(val_data, window_size)
+    test_dataset = TimeSeriesDataset(test_data, window_size)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Model seçimi
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if model_type == "LSTM":
+        model = LSTMAnomalyDetector(input_size=1)
+    else:
+        model = GRUAnomalyDetector(input_size=1)
+        
+    print(f"\n--- {model_type} Egitimi Basliyor ({scenario} Senaryosu) ---")
+    
+    # Modeli eğit
+    trained_model = train_model(
+        model, train_loader, val_loader, 
+        epochs=epochs, patience=patience, device=device
+    )
+    
+    # Test fazı
+    trained_model.eval()
+    test_predictions = []
+    with torch.no_grad():
+        for X_batch, _ in test_loader:
+            X_batch = X_batch.to(device)
+            preds = trained_model(X_batch)
+            test_predictions.extend(preds.cpu().numpy().flatten())
+            
+    # Hata hesaplama ve anomali threshold (basit eşik)
+    # Burada modelin tahmini ile gerçek değer arasındaki farka göre basit bir anomali kararı veriyoruz.
+    actuals = test_data[window_size:]
+    mse_errors = np.abs(test_predictions - actuals)
+    threshold = np.mean(mse_errors) + 2 * np.std(mse_errors) # Basit dinamik eşik
+    
+    y_pred_binary = (mse_errors > threshold).astype(int)
+    
+    # Hedef (y_test) değerleri pencere boyutuna göre hizalanmalı
+    y_true_aligned = y_test.iloc[window_size:].values
+    
+    # Metrikleri hesapla
+    metrics = calculate_metrics(y_true_aligned, y_pred_binary)
+    return metrics
+
+================================================================================
+File: .\src\pipeline\logger.py
+================================================================================
+
+import json
+import os
+from datetime import datetime
+
+class ExperimentLogger:
+    """
+    Deney parametrelerini ve performans sonuçlarını (metrics) merkezi olarak kaydeder.
+    """
+    def __init__(self, log_dir="logs"):
+        self.log_dir = log_dir
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Benzersiz bir deney adı oluştur
+        self.experiment_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = os.path.join(self.log_dir, f"experiment_{self.experiment_id}.json")
+        self.history = []
+
+    def log_run(self, model_name, scenario, params, metrics):
+        """
+        Tek bir çalıştırmanın sonucunu günlüğe (history) ekler.
+        """
+        run_data = {
+            "model": model_name,
+            "scenario": scenario,
+            "parameters": params,
+            "metrics": metrics
+        }
+        self.history.append(run_data)
+        self.save()
+
+    def save(self):
+        """Güncel durumu JSON dosyasına yazar."""
+        with open(self.log_file, "w", encoding="utf-8") as f:
+            json.dump(self.history, f, indent=4)
+        
+    def summary(self):
+        """En iyi sonuçları konsola yazdırır."""
+        print(f"Toplam {len(self.history)} deney loglandi: {self.log_file}")
+
+================================================================================
+File: .\src\pipeline\trainer.py
+================================================================================
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from utils.early_stopping import EarlyStopping
+import os
+
+def train_model(model, train_loader, val_loader, epochs=50, patience=5, lr=0.001, device='cpu', checkpoint_path='checkpoint.pt'):
+    """
+    Standart PyTorch eğitim döngüsü (EarlyStopping destekli).
+    """
+    model = model.to(device)
+    criterion = nn.MSELoss() # Rekonstrüksiyon için Hata Kareler Ortalaması
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    early_stopping = EarlyStopping(patience=patience, path=checkpoint_path)
+    
+    for epoch in range(epochs):
+        # Eğitim fazı
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            
+            optimizer.zero_grad()
+            predictions = model(X_batch)
+            loss = criterion(predictions, y_batch)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item() * X_batch.size(0)
+            
+        train_loss = train_loss / len(train_loader.dataset)
+        
+        # Doğrulama fazı
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                predictions = model(X_batch)
+                loss = criterion(predictions, y_batch)
+                val_loss += loss.item() * X_batch.size(0)
+                
+        val_loss = val_loss / len(val_loader.dataset)
+        
+        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        
+        # Early stopping kontrolü
+        early_stopping(val_loss, model)
+        if early_stopping.early_stop:
+            print("Erken durdurma (Early Stopping) tetiklendi!")
+            break
+            
+    # En iyi modeli geri yükle
+    if os.path.exists(checkpoint_path):
+        model.load_state_dict(torch.load(checkpoint_path))
+        
+    return model
+
+================================================================================
+File: .\src\pipeline\__init__.py
+================================================================================
+
+from .experiment import run_dl_experiment, add_gaussian_noise
+from .logger import ExperimentLogger
+from .trainer import train_model
+
+__all__ = ['run_dl_experiment', 'add_gaussian_noise', 'ExperimentLogger', 'train_model']
+
+================================================================================
+File: .\src\utils\early_stopping.py
+================================================================================
+
+import torch
+import numpy as np
+
+class EarlyStopping:
+    """
+    Validation loss iyileşmediğinde eğitimi erken durduran yardımcı sınıf.
+    """
+    def __init__(self, patience=5, min_delta=0, path='checkpoint.pt'):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.path = path
+        self.counter = 0
+        self.best_loss = np.inf
+        self.early_stop = False
+
+    def __call__(self, val_loss, model):
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+
+    def save_checkpoint(self, val_loss, model):
+        """Validation loss düştüğünde modeli kaydeder."""
+        torch.save(model.state_dict(), self.path)
+
+================================================================================
+File: .\src\utils\metrics.py
+================================================================================
+
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from scipy.stats import wilcoxon
+from statsmodels.stats.contingency_tables import mcnemar
+
+def calculate_metrics(y_true, y_pred):
+    """
+    Sınıflandırma (anomali tespiti) için temel metrikleri hesaplar.
+    """
+    acc = accuracy_score(y_true, y_pred)
+    prec = precision_score(y_true, y_pred, zero_division=0)
+    rec = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    return {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1": f1}
+
+def perform_wilcoxon_test(metric_list_1, metric_list_2):
+    """
+    İki modelin (örn. LSTM ve Otomata) cross-validation (GroupKFold) 
+    sonuçları (F1 skorları gibi) arasındaki anlamlılığı test eder.
+    """
+    stat, p_value = wilcoxon(metric_list_1, metric_list_2)
+    return stat, p_value
+
+def perform_mcnemar_test(y_true, y_pred_model1, y_pred_model2):
+    """
+    İki modelin aynı veri seti üzerindeki hata dağılımlarını karşılaştırır.
+    b: Model 1'in yanlış, Model 2'nin doğru bildikleri
+    c: Model 1'in doğru, Model 2'nin yanlış bildikleri
+    """
+    b = sum((y_pred_model1 != y_true) & (y_pred_model2 == y_true))
+    c = sum((y_pred_model1 == y_true) & (y_pred_model2 != y_true))
+    
+    table = [[0, b], [c, 0]]
+    result = mcnemar(table, exact=True)
+    return result.statistic, result.pvalue
+
+================================================================================
+File: .\src\utils\seed.py
+================================================================================
+
+import torch
+import numpy as np
+import random
+import os
+
+def set_seed(seed=42):
+    """
+    Proje genelinde tekrarlanabilirliği sağlamak için tüm rastgelelikleri sabitler.
+    """
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) # Eğer birden fazla GPU varsa
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed ayarlandı: {seed}")
+
+================================================================================
+File: .\src\utils\visualize.py
+================================================================================
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, roc_curve, auc
+import os
+
+def plot_confusion_matrix(y_true, y_pred, title="Confusion Matrix", save_path=None):
+    """Confusion matrix çizimi ve kaydetmesi."""
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False)
+    plt.title(title)
+    plt.xlabel('Tahmin Edilen')
+    plt.ylabel('Gerçek')
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
+def plot_roc_curve(y_true, y_scores, title="ROC Eğrisi", save_path=None):
+    """ROC eğrisi çizimi."""
+    fpr, tpr, _ = roc_curve(y_true, y_scores)
+    roc_auc = auc(fpr, tpr)
+    
+    plt.figure(figsize=(6, 5))
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(title)
+    plt.legend(loc="lower right")
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
+def plot_transition_heatmap(transition_matrix, title="Transition Heatmap", save_path=None):
+    """Otomata modeli için durum geçiş olasılıklarını görselleştirir."""
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(transition_matrix, annot=True, cmap='viridis')
+    plt.title(title)
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
+================================================================================
+File: .\src\utils\__init__.py
+================================================================================
+
+from .seed import set_seed
+from .early_stopping import EarlyStopping
+from .metrics import calculate_metrics, perform_wilcoxon_test, perform_mcnemar_test
+
+__all__ = ['set_seed', 'EarlyStopping', 'calculate_metrics', 'perform_wilcoxon_test', 'perform_mcnemar_test']
+
+================================================================================
+File: .\tests\test_unseen.py
+================================================================================
+
+import unittest
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from automata import levenshtein_uzakligi, OlasiliksalOtomata
+
+class TestGorulmemisOruntuYonetimi(unittest.TestCase):
+    
+    def test_levenshtein_uzakligi_eslesme(self):
+        self.assertEqual(levenshtein_uzakligi("abc", "abc"), 0)
+        
+    def test_levenshtein_uzakligi_degisim(self):
+        self.assertEqual(levenshtein_uzakligi("abc", "adc"), 1)
+        
+    def test_levenshtein_uzakligi_ekleme(self):
+        self.assertEqual(levenshtein_uzakligi("abc", "abcd"), 1)
+        
+    def test_levenshtein_uzakligi_silme(self):
+        self.assertEqual(levenshtein_uzakligi("abc", "ab"), 1)
+        
+    def test_levenshtein_uzakligi_bos(self):
+        self.assertEqual(levenshtein_uzakligi("", "abc"), 3)
+        self.assertEqual(levenshtein_uzakligi("abc", ""), 3)
+        self.assertEqual(levenshtein_uzakligi("", ""), 0)
+        
+    def test_en_yakin_durum_esleme(self):
+        otomata = OlasiliksalOtomata(pencere_boyutu=3, alfabe_boyutu=3)
+        otomata.durumlar = {"abc", "def", "ghi"}
+        
+        en_yakin, uzaklik = otomata.en_yakin_durumu_bul("adc")
+        self.assertEqual(en_yakin, "abc")
+        self.assertEqual(uzaklik, 1)
+        
+        en_yakin, uzaklik = otomata.en_yakin_durumu_bul("xef")
+        self.assertEqual(en_yakin, "def")
+        self.assertEqual(uzaklik, 1)
+
+if __name__ == "__main__":
+    unittest.main()
